@@ -7,8 +7,8 @@
 * to become an investment.
 *
 * NOTES:
-*   Performance is worst with known letters of high-frequency and words of highest length frequency. (Ex. 'E' 6)
-*   Examples such as 'EZ' 3 are fast.
+*   Performance is worst with known letters of high-frequency and words of highest length frequency. (Ex. 'E_____' 6)
+*   Examples such as 'EY_' 3 are fast.
 *   The addendum here is that retrieval is fast enough for all cases that the end user cannot notice any
 *   delays.
 *
@@ -182,31 +182,36 @@ inline static unsigned char GetLowestFrequencyIndex(const char * known)
 * commentary may be over the top for you. I am geniunely having a good time writing this with my cat sitting in my
 * lap.
 *
-* On to the actual outline of this function. This function does as little as possible to reduce the time required
-* to fetch potential words for the end-user.
+* On to the actual outline of this function. This function does as little complex work as possible to reduce the
+* time required to fetch potential words for the end-user.
 *   1) The known letter list is passed to our utility function which returns the index of the known letter of lowest
 *      frequency based on the external dataset above. Remember that 'A' maps to index 0 and so on. Revisit the Order
-*      'map' if further clarification is needed.
+*      'map' if further clarification is needed. Also, note that we create a copy of the known letter list and strip
+*      it to make it more readily consumable.
 *   2) Next, we remove the known letter of lowest frequency from the checklist. The known letter of lowest frequency
 *      is guaranteed to exist in Words in the bucket that is retrieved via the index mentioned above.
 *   3) The bucket is retrieved via the index from step 1.
-*   4) Lastly, we search against all Words in the bucket using the compressed version of the words for the remaining
-*      known letters. Push those results into our results vector and return it.
+*   4) We search against all Words in the bucket using the compressed version of the words for the remaining
+*      known letters. Push those results into our preliminary results vector.
+*   5) Now that we have narrowed the search space fairly significantly, it is time to incorporate our positional data.
+*      The known positional data is compared to that of each word in the search space then the results are returned.
 */
 static std::vector<std::shared_ptr<Word>> Lookup(std::shared_ptr<std::vector<std::shared_ptr<std::vector<std::shared_ptr<Word>>>>> dictionary, const char * known)
 {
+  // Remove positional data.
+  std::string ks = _strdup(known);
+  ks.erase(std::remove(ks.begin(), ks.end(), '_'), ks.end());
+
   // Index for lowest frequency letter. Used to retrieve the 'smallest' bucket.
-  const unsigned char idx = GetLowestFrequencyIndex(known);
+  const unsigned char idx = GetLowestFrequencyIndex(ks.c_str());
 
   // Known minus corresponding index character. No need to check if it exists twice.
-  std::string ks = _strdup(known);
   ks.erase(std::remove(ks.begin(), ks.end(), (idx + 'A')), ks.end());
-  auto k = ks.c_str();
-  
+
   // Create the return object and get a handle to the 'smallest' bucket.
-  std::vector<std::shared_ptr<Word>> matches;
+  std::vector<std::shared_ptr<Word>> matches1;
   const auto bucket = dictionary->at(idx);
-  std::copy_if(bucket->begin(), bucket->end(), std::back_inserter(matches), [k](std::shared_ptr<Word> w) {
+  std::copy_if(bucket->begin(), bucket->end(), std::back_inserter(matches1), [k = ks.c_str()](std::shared_ptr<Word> w) {
     auto b = k;
     auto p = w->compressed.c_str();
     for (char c = *b; c; c = *++b)
@@ -220,7 +225,26 @@ static std::vector<std::shared_ptr<Word>> Lookup(std::shared_ptr<std::vector<std
     return true;
   });
 
-  return matches;
+  // Now that we have shrunk the search space further, apply positional data requirements.
+  std::vector<std::shared_ptr<Word>> matches2;
+  std::copy_if(matches1.begin(), matches1.end(), std::back_inserter(matches2), [known](std::shared_ptr<Word> w) {
+    auto b = known;
+    auto p = w->original.c_str();
+    for (char c = *b; c; )
+    {
+      if (c != *p && c != '_')
+      {
+        return false;
+      }
+
+      c = *++b;
+      ++p;
+    }
+
+    return true;
+  });
+
+  return matches2;
 }
 
 int main()
@@ -253,12 +277,12 @@ int main()
     // Remember the top-level vector is indexed based on word length.
     const auto ptr = dictionary->at(length - 2);
 
-    std::cout << "Please enter the known letters capitalized and without spaces nor duplicates, i.e., 'ABC'.\n";
+    std::cout << "Please enter the known letters and positions capitalized and without spaces, i.e., 'B_C_'.\n";
     std::getline(std::cin, input);
 
     std::transform(input.begin(), input.end(), input.begin(), ::toupper);
 
-    // Pass the first bucket and the known letters.
+    // Pass the first bucket and the known letters and positions.
     const auto results = Lookup(ptr, input.c_str());
 
     // If empty, let end user know.
